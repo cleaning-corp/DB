@@ -1,84 +1,77 @@
 #!/bin/bash
+set -euo pipefail
 
-# Настройки
 INIT_FILE="init.sql"
 SCHEMA_DIR="schemas"
-TEMP_DIR=".tmp"
+
+SOURCES=(
+    "enum.sql:ENUM ТИПЫ"
+    "table.sql:ОСНОВНЫЕ ТАБЛИЦЫ:exclude:salary_distribution|orders"
+    "table.sql:ТАБЛИЦЫ С ЗАВИСИМОСТЯМИ:include:salary_distribution|orders"
+    "seed.sql:НАЧАЛЬНЫЕ ДАННЫЕ"
+    "function.sql:ФУНКЦИИ"
+    "trigger.sql:ТРИГГЕРЫ"
+)
+
+# Проверка входных данных
+[[ ! -d "$SCHEMA_DIR" ]] && { echo "❌ Ошибка: директория '$SCHEMA_DIR' не существует!"; exit 1; }
+touch "$INIT_FILE" || { echo "❌ Ошибка: нет прав на запись в '$INIT_FILE'!"; exit 1; }
 
 echo "🚀 Начинаю генерацию $INIT_FILE..."
 
-# Создаём временную директорию
-mkdir -p $TEMP_DIR
+generate_section() {
+    local filename="$1" filter_type="$2" pattern="$3"
+    local find_cmd="find \"$SCHEMA_DIR\" -name \"$filename\" -type f"
 
-# 1. Собираем все ENUM типы
-{
-    echo "-- ===== ENUM ТИПЫ ====="
-    find $SCHEMA_DIR -name "enum.sql" -type f -exec cat {} \;
+    echo "-- ===== $header ====="
+
+    if [[ "$filter_type" == "exclude" ]]; then
+        IFS='|' read -ra patterns <<< "$pattern"
+        for p in "${patterns[@]}"; do
+            find_cmd+=" -not -path \"*/$p/*\""
+        done
+        find_cmd+=" -exec cat {} \;"
+    elif [[ "$filter_type" == "include" ]]; then
+        IFS='|' read -ra patterns <<< "$pattern"
+        find_cmd+=" \( "
+        first=true
+        for p in "${patterns[@]}"; do
+            if [[ "$first" == true ]]; then
+                find_cmd+="-path \"*/$p/*\""
+                first=false
+            else
+                find_cmd+=" -o -path \"*/$p/*\""
+            fi
+        done
+        find_cmd+=" \) -exec cat {} \;"
+    else
+        find_cmd+=" -exec cat {} \;"
+    fi
+
+    eval "$find_cmd" || echo "⚠️ Предупреждение: не найдено файлов для '$filename' с фильтром '$filter_type:$pattern'"
     echo ""
-} > $TEMP_DIR/00_enums.sql
+}
 
-# 2. Собираем таблицы
-{
-    echo "-- ===== ТАБЛИЦЫ ====="
-    find $SCHEMA_DIR -name "table.sql" -not -path "*salary_distribution*" -type f -exec cat {} \;
-    echo ""
-} > $TEMP_DIR/01_tables.sql
-
-# 3. Собираем начальные данные
-{
-    echo "-- ===== НАЧАЛЬНЫЕ ДАННЫЕ ====="
-    find $SCHEMA_DIR -name "seed.sql" -type f -exec cat {} \;
-    echo ""
-} > $TEMP_DIR/02_seeds.sql
-
-# 4. Собираем таблицы с зависимостями
-{
-    echo "-- ===== ТАБЛИЦЫ С ЗАВИСИМОСТЯМИ ====="
-    find $SCHEMA_DIR -path "*salary_distribution*" -name "table.sql" -type f -exec cat {} \;
-    echo ""
-} > $TEMP_DIR/03_dependent_tables.sql
-
-# 5. Собираем функции
-{
-    echo "-- ===== ФУНКЦИИ ====="
-    find $SCHEMA_DIR -name "function.sql" -type f -exec cat {} \;
-    echo ""
-} > $TEMP_DIR/04_functions.sql
-
-# 6. Собираем триггеры
-{
-    echo "-- ===== ТРИГГЕРЫ ====="
-    find $SCHEMA_DIR -name "trigger.sql" -type f -exec cat {} \;
-    echo ""
-} > $TEMP_DIR/05_triggers.sql
-
-# Собираем итоговый файл
 {
     echo "-- 🚀 Автоматически сгенерированный init.sql"
     echo "-- ⚠️ Не редактировать вручную! Генерируется скриптом"
     echo ""
     echo "BEGIN;"
     echo ""
-    cat $TEMP_DIR/00_enums.sql
-    cat $TEMP_DIR/01_tables.sql
-    cat $TEMP_DIR/02_seeds.sql
-    cat $TEMP_DIR/03_dependent_tables.sql
-    cat $TEMP_DIR/04_functions.sql
-    cat $TEMP_DIR/05_triggers.sql
-    echo ""
+
+    for source in "${SOURCES[@]}"; do
+        IFS=':' read -r filename header filter_type pattern <<< "$source"
+        generate_section "$filename" "$filter_type" "$pattern"
+    done
+
     echo "COMMIT;"
     echo ""
     echo "-- ✅ Сгенерировано $(date +'%Y-%m-%d %H:%M:%S')"
-} > $INIT_FILE
-
-# Удаляем временные файлы
-rm -rf $TEMP_DIR
+} > "$INIT_FILE"
 
 echo "✅ Генерация $INIT_FILE завершена!"
 echo "ℹ️ Порядок выполнения:"
-echo "  1. ENUM типы"
-echo "  2. Основные таблицы"
-echo "  3. Начальные данные"
-echo "  4. Таблицы с зависимостями"
-echo "  5. Функции"
-echo "  6. Триггеры"
+for i in "${!SOURCES[@]}"; do
+    header=$(echo "${SOURCES[$i]}" | cut -d':' -f2)
+    printf "  %d. %s\n" $((i+1)) "$header"
+done
