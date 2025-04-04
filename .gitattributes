@@ -1,0 +1,22 @@
+* text=auto
+
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.sql  text eol=lf
+*.sh   text eol=lf
+
+# Git attributes
+*.gitattributes      text
+.gitignore           text
+
+# Ignore files
+.gitattributes       export-ignore
+.gitignore           export-ignore
+.gitkeep             export-ignore
+
+# Linguist detection
+*.yaml               linguist-detectable=true
+*.yml                linguist-detectable=true
+*.sql                linguist-detectable=true
+*.sh                 linguist-detectable=true
+

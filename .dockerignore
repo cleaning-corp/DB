@@ -1,0 +1,14 @@
+.idea/
+
+data/
+
+docs/
+init.sql
+
+.czrc
+.editorconfig
+.env.example
+
+.git/
+.gitattributes
+.gitignore
