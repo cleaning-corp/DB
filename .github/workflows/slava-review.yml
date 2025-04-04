@@ -17,45 +17,71 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Setup environment
+        run: |
+          sudo apt-get install -y jq
+
       - name: Get commit data
         id: commit_data
         uses: actions/github-script@v6
         with:
           script: |
-            const { data: commit } = await github.rest.repos.getCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.sha
-            });
+            try {
+              const { data: commit } = await github.rest.repos.getCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: context.sha
+              });
 
-            core.setOutput('author', commit.author?.login || context.actor);
-            core.setOutput('commit_sha', context.sha);
+              const files = commit.files || [];
+              const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
+              const author = commit.author?.login || context.actor;
 
-      - name: Generate random insult
-        id: insult_generator
+              core.setOutput('total_changes', totalChanges);
+              core.setOutput('author', author);
+              core.setOutput('commit_sha', context.sha);
+            } catch (error) {
+              core.setFailed('Failed to get commit data: ' + error.message);
+            }
+
+      - name: Generate comment
+        id: generate_comment
         run: |
-          INSULTS=(
-            "💀 Код-убийца! Ты вообще тестировал это перед тем как пушить?"
-            "🤮 Меня тошнит! Кто тебя вообще допустил к коду?"
-            "🔥 Сожги это! Нет, серьезно, лучше удали этот коммит."
-            "👎 Ужасный код! Худшее что я видел за последний год."
-            "💩 Дерьмовый код! Даже новичок напишет лучше."
-          )
+          REVIEWS=("💀 Код-убийца" "🤮 Меня тошнит" "🔥 Сожги это" "👎 Ужасно" "💩 Дерьмовый код")
+          TOTAL_CHANGES=${{ steps.commit_data.outputs.total_changes || 0 }}
+          RANDOM_REVIEW=${REVIEWS[$((RANDOM % ${#REVIEWS[@]}))]}
 
-          RANDOM_INSULT=${INSULTS[$((RANDOM % ${#INSULTS[@]}))]}
-          echo "INSULT=$RANDOM_INSULT" >> $GITHUB_ENV
+          if [ "$TOTAL_CHANGES" -lt 50 ] && [ $((RANDOM % 10)) -eq 0 ]; then
+            COMMENT="🫤 Ну... ладно. Но я всё равно недоволен."
+          else
+            COMMENT="$RANDOM_REVIEW"
+          fi
+
+          echo "COMMENT=$COMMENT" >> $GITHUB_ENV
+          echo "AUTHOR=${{ steps.commit_data.outputs.author }}" >> $GITHUB_ENV
+          echo "COMMIT_SHA=${{ steps.commit_data.outputs.commit_sha }}" >> $GITHUB_ENV
 
       - name: Post comment
         uses: actions/github-script@v6
         env:
-          AUTHOR: ${{ steps.commit_data.outputs.author }}
-          COMMIT_SHA: ${{ steps.commit_data.outputs.commit_sha }}
-          INSULT: ${{ env.INSULT }}
+          COMMENT: ${{ env.COMMENT }}
+          AUTHOR: ${{ env.AUTHOR }}
+          COMMIT_SHA: ${{ env.COMMIT_SHA }}
         with:
           script: |
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: process.env.COMMIT_SHA,
-              body: `@${process.env.AUTHOR} ${process.env.INSULT}`
-            });
+            try {
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: process.env.COMMIT_SHA,
+                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
+              });
+            } catch (error) {
+              core.notice("Creating issue instead...");
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Code review for ${process.env.COMMIT_SHA}`,
+                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
+              });
+            }
