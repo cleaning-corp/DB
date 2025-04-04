@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   nuclear_review:
     runs-on: ubuntu-latest
@@ -17,40 +21,44 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const { data: commits } = await github.rest.repos.listCommits({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: context.sha,
-              per_page: 1
-            });
+            try {
+              const { data: commits } = await github.rest.repos.listCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: context.sha,
+                per_page: 1
+              });
 
-            const commit = commits[0];
-            const files = commit.files || [];
-            const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
-            const isHugeChange = totalChanges > 300;
-            const isMassiveFile = files.some(file => (file.changes || 0) > 150);
+              const commit = commits[0];
+              const files = commit.files || [];
+              const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
+              const isHugeChange = totalChanges > 300;
+              const isMassiveFile = files.some(file => (file.changes || 0) > 150);
 
-            const errors = [
-              "найдены утечки памяти (вымышленные)",
-              "нарушены принципы SOLID (как будто Слава их соблюдает)",
-              "отсутствует документация (Слава её всё равно не читает)",
-              "код не прошёл проверку на 'хороший тон' (по мнению Славы)",
-            ];
-            const randomError = errors[Math.floor(Math.random() * errors.length)];
+              const errors = [
+                "найдены утечки памяти (вымышленные)",
+                "нарушены принципы SOLID (как будто Слава их соблюдает)",
+                "отсутствует документация (Слава её всё равно не читает)",
+                "код не прошёл проверку на 'хороший тон' (по мнению Славы)",
+              ];
+              const randomError = errors[Math.floor(Math.random() * errors.length)];
 
-            let extraHate = "";
-            if (isHugeChange) {
-              extraHate = "Ты чо, **целый роман** написал?! Это же не код, а **помойка**! Разбей на куски!";
-            } else if (isMassiveFile) {
-              const badFile = files.find(file => (file.changes || 0) > 150);
-              extraHate = `Файл **${badFile.filename}** — это **ад на земле**! ${badFile.changes} изменений? Серьёзно?`;
+              let extraHate = "";
+              if (isHugeChange) {
+                extraHate = "Ты чо, **целый роман** написал?! Это же не код, а **помойка**! Разбей на куски!";
+              } else if (isMassiveFile) {
+                const badFile = files.find(file => (file.changes || 0) > 150);
+                extraHate = `Файл **${badFile.filename}** — это **ад на земле**! ${badFile.changes} изменений? Серьёзно?`;
+              }
+
+              core.setOutput('total_changes', totalChanges);
+              core.setOutput('is_huge_change', isHugeChange);
+              core.setOutput('is_massive_file', isMassiveFile);
+              core.setOutput('random_error', randomError);
+              core.setOutput('extra_hate', extraHate);
+            } catch (error) {
+              core.setFailed(`Failed to analyze changes: ${error.message}`);
             }
-
-            core.setOutput('total_changes', totalChanges);
-            core.setOutput('is_huge_change', isHugeChange);
-            core.setOutput('is_massive_file', isMassiveFile);
-            core.setOutput('random_error', randomError);
-            core.setOutput('extra_hate', extraHate);
 
       - name: Generate Maximum Toxicity
         id: slava_review
@@ -81,10 +89,15 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const commentBody = `@${{ github.actor }} **СЛАВА ГНЕВНО РЕВЬЮВИТ ТВОЙ КОД В MAIN:**\n\n${process.env.REVIEW_OUTPUT}\n\n**P.S.** Не принимай близко к сердцу... (или принимай, мне плевать)`;
-            await github.rest.repos.createCommitComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-              body: commentBody
-            });
+            try {
+              const commentBody = `@${{ github.actor }} **СЛАВА ГНЕВНО РЕВЬЮВИТ ТВОЙ КОД В MAIN:**\n\n${process.env.REVIEW_OUTPUT}\n\n**P.S.** Не принимай близко к сердцу... (или принимай, мне плевать)`;
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: commentBody
+              });
+            } catch (error) {
+              core.error(`Failed to create comment: ${error.message}`);
+              core.setFailed(error.message);
+            }
