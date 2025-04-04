@@ -17,6 +17,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Setup environment
+        id: setup
+        run: |
+          sudo apt-get install -y jq
+          echo "REVIEWS=(\"💀 Код-убийца\" \"🤮 Меня тошнит\" \"🔥 Сожги это\" \"👎 Ужасно\" \"💩 Дерьмовый код\")" >> $GITHUB_ENV
+
       - name: Get commit data
         id: commit_data
         uses: actions/github-script@v6
@@ -29,58 +35,37 @@ jobs:
                 ref: context.sha
               });
 
-              core.setOutput('result', JSON.stringify({
-                files: commit.files || [],
-                author: commit.author?.login || context.actor,
-                sha: context.sha
-              }));
+              const files = commit.files || [];
+              const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
+              const author = commit.author?.login || context.actor;
+
+              core.setOutput('total_changes', totalChanges);
+              core.setOutput('author', author);
+              core.setOutput('commit_sha', context.sha);
             } catch (error) {
-              core.setOutput('result', JSON.stringify({
-                files: [],
-                author: context.actor,
-                sha: context.sha
-              }));
+              core.setFailed('Failed to get commit data: ' + error.message);
             }
-
-      - name: Analyze changes
-        id: pr_analysis
-        run: |
-          sudo apt-get install -y jq
-          FILES_JSON='${{ steps.commit_data.outputs.result }}'
-          TOTAL_CHANGES=$(echo "$FILES_JSON" | jq '[.files[].changes] | add // 0')
-          AUTHOR=$(echo "$FILES_JSON" | jq -r '.author')
-          COMMIT_SHA=$(echo "$FILES_JSON" | jq -r '.sha')
-          IS_HUGE=$(($TOTAL_CHANGES > 300))
-
-          echo "total_changes=$TOTAL_CHANGES" >> $GITHUB_OUTPUT
-          echo "is_huge_change=$IS_HUGE" >> $GITHUB_OUTPUT
-          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
 
       - name: Generate comment
         id: generate_comment
         run: |
-          REVIEWS=(
-            "💀 Код-убийца! Ты вообще тестировал это?"
-            "🤮 Меня тошнит от такого кода"
-            "🔥 Лучше удали это нафиг"
-            "👎 Худший код за всю историю"
-            "💩 Это просто позор"
-          )
+          TOTAL_CHANGES=${{ steps.commit_data.outputs.total_changes || 0 }}
           RANDOM_REVIEW=${REVIEWS[$((RANDOM % ${#REVIEWS[@]}))]}
 
-          if [ ${{ steps.pr_analysis.outputs.total_changes }} -lt 50 ] && [ $((RANDOM % 10)) -eq 0 ]; then
-            echo "comment=🫤 Ну... ладно. Но я всё равно недоволен." >> $GITHUB_OUTPUT
+          if [ $TOTAL_CHANGES -lt 50 ] && [ $((RANDOM % 10)) -eq 0 ]; then
+            echo "COMMENT=🫤 Ну... ладно. Но я всё равно недоволен." >> $GITHUB_ENV
           else
-            echo "comment=$RANDOM_REVIEW" >> $GITHUB_OUTPUT
+            echo "COMMENT=$RANDOM_REVIEW" >> $GITHUB_ENV
           fi
+          echo "AUTHOR=${{ steps.commit_data.outputs.author }}" >> $GITHUB_ENV
+          echo "COMMIT_SHA=${{ steps.commit_data.outputs.commit_sha }}" >> $GITHUB_ENV
 
-      - name: Post commit comment
+      - name: Post comment
         uses: actions/github-script@v6
         env:
-          COMMENT: ${{ steps.generate_comment.outputs.comment }}
-          AUTHOR: ${{ steps.pr_analysis.outputs.author }}
-          COMMIT_SHA: ${{ steps.pr_analysis.outputs.commit_sha }}
+          COMMENT: ${{ env.COMMENT }}
+          AUTHOR: ${{ env.AUTHOR }}
+          COMMIT_SHA: ${{ env.COMMIT_SHA }}
         with:
           script: |
             try {
@@ -91,16 +76,11 @@ jobs:
                 body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
               });
             } catch (error) {
-              core.notice("Could not create commit comment: " + error.message);
-              // Создаем issue, если не удалось оставить комментарий к коммиту
-              try {
-                await github.rest.issues.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  title: `Code review failed for commit ${process.env.COMMIT_SHA}`,
-                  body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
-                });
-              } catch (issueError) {
-                core.error("Failed to create issue: " + issueError.message);
-              }
+              core.notice("Creating issue instead...");
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `Code review for ${process.env.COMMIT_SHA}`,
+                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
+              });
             }
