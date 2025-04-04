@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  issues: write
 
 jobs:
   nuclear_review:
@@ -16,88 +17,74 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Analyze changes
-        id: pr_analysis
+      - name: Get commit data
+        id: commit_data
         uses: actions/github-script@v6
         with:
           script: |
             try {
-              const { data: commits } = await github.rest.repos.listCommits({
+              const { data: commit } = await github.rest.repos.getCommit({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: context.sha,
-                per_page: 1
+                ref: context.sha
               });
 
-              const commit = commits[0];
-              const files = commit.files || [];
-              const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
-              const isHugeChange = totalChanges > 300;
-              const isMassiveFile = files.some(file => (file.changes || 0) > 150);
-
-              const errors = [
-                "найдены утечки памяти (вымышленные)",
-                "нарушены принципы SOLID (как будто Слава их соблюдает)",
-                "отсутствует документация (Слава её всё равно не читает)",
-                "код не прошёл проверку на 'хороший тон' (по мнению Славы)",
-              ];
-              const randomError = errors[Math.floor(Math.random() * errors.length)];
-
-              let extraHate = "";
-              if (isHugeChange) {
-                extraHate = "Ты чо, **целый роман** написал?! Это же не код, а **помойка**! Разбей на куски!";
-              } else if (isMassiveFile) {
-                const badFile = files.find(file => (file.changes || 0) > 150);
-                extraHate = `Файл **${badFile.filename}** — это **ад на земле**! ${badFile.changes} изменений? Серьёзно?`;
-              }
-
-              core.setOutput('total_changes', totalChanges);
-              core.setOutput('is_huge_change', isHugeChange);
-              core.setOutput('is_massive_file', isMassiveFile);
-              core.setOutput('random_error', randomError);
-              core.setOutput('extra_hate', extraHate);
+              return {
+                files: commit.files || [],
+                author: commit.author?.login || context.actor
+              };
             } catch (error) {
-              core.setFailed(`Failed to analyze changes: ${error.message}`);
+              core.setFailed(`Commit access error: ${error.message}`);
+              return { files: [], author: context.actor };
             }
+          result-encoding: json
 
-      - name: Generate Maximum Toxicity
-        id: slava_review
+      - name: Analyze changes
+        id: pr_analysis
         run: |
-          RANDOM_NUMBER=$(( RANDOM % 100 ))
+          FILES_JSON='${{ steps.commit_data.outputs.result }}'
+          FILES=$(echo "$FILES_JSON" | jq -r '.files')
+          AUTHOR=$(echo "$FILES_JSON" | jq -r '.author')
+
+          TOTAL_CHANGES=$(echo "$FILES" | jq 'reduce .[] as $file (0; . + ($file.changes // 0))')
+          IS_HUGE=$(($TOTAL_CHANGES > 300))
+
+          echo "total_changes=$TOTAL_CHANGES" >> $GITHUB_OUTPUT
+          echo "is_huge_change=$IS_HUGE" >> $GITHUB_OUTPUT
+          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+
+      - name: Generate comment
+        id: generate_comment
+        run: |
           if [ ${{ steps.pr_analysis.outputs.total_changes }} -lt 50 ] && [ $(( RANDOM % 10 )) -eq 0 ]; then
-            echo "REVIEW_OUTPUT=🫤 Ну... ладно. Но я всё равно **недоволен**." >> $GITHUB_ENV
+            echo "comment=🫤 Ну... ладно. Но я всё равно недоволен." >> $GITHUB_OUTPUT
           else
-            REVIEWS=(
-              "💀 **Код-убийца**. Ты вообще понимаешь, что этот код **сломает продакшн**?"
-              "🤮 **Меня тошнит**. Кто тебя **пустил к компьютеру**?"
-              "🔥 **Сожги это**. Нет, серьёзно, **лучшее решение** — rm -rf."
-              "👎 **Это хуже, чем PHP в 2007**. Позор."
-              "💩 **Код-дерьмо**. Даже **линтинг** сдох от стыда."
-              "🇷🇺 **Это что, код?** Это **позорище на всю деревню**!"
+            RANDOM_REVIEW=$(
+              echo -e "💀 Код-убийца\n🤮 Меня тошнит\n🔥 Сожги это" | shuf -n 1
             )
-            RANDOM_REVIEW=${REVIEWS[$(( RANDOM % ${#REVIEWS[@]} ))]}
-
-            if [[ "${{ steps.pr_analysis.outputs.extra_hate }}" != "" ]]; then
-              RANDOM_REVIEW+="\n\n**💢 ДОПОЛНИТЕЛЬНЫЙ ГНЕВ 💢**: ${{ steps.pr_analysis.outputs.extra_hate }}"
-            fi
-
-            RANDOM_REVIEW+="\n\n**🔧 'Найдена проблема'**: ${{ steps.pr_analysis.outputs.random_error }}"
-            echo "REVIEW_OUTPUT=$RANDOM_REVIEW" >> $GITHUB_ENV
+            echo "comment=$RANDOM_REVIEW" >> $GITHUB_OUTPUT
           fi
 
-      - name: Nuke the Commit
+      - name: Post comment
         uses: actions/github-script@v6
+        env:
+          COMMENT: ${{ steps.generate_comment.outputs.comment }}
+          AUTHOR: ${{ steps.pr_analysis.outputs.author }}
         with:
           script: |
             try {
-              const commentBody = `@${{ github.actor }} **СЛАВА ГНЕВНО РЕВЬЮВИТ ТВОЙ КОД В MAIN:**\n\n${process.env.REVIEW_OUTPUT}\n\n**P.S.** Не принимай близко к сердцу... (или принимай, мне плевать)`;
               await github.rest.repos.createCommitComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 commit_sha: context.sha,
-                body: commentBody
+                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
               });
             } catch (error) {
-              core.error(`Failed to create comment: ${error.message}`);
-              core.setFailed(error.message);
+              core.notice("Fallback to issue comment");
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
+              });
             }
