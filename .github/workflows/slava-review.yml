@@ -29,24 +29,26 @@ jobs:
                 ref: context.sha
               });
 
-              return {
+              const result = JSON.stringify({
                 files: commit.files || [],
                 author: commit.author?.login || context.actor
-              };
+              });
+
+              core.setOutput('result', result);
             } catch (error) {
               core.setFailed(`Commit access error: ${error.message}`);
-              return { files: [], author: context.actor };
+              core.setOutput('result', JSON.stringify({files: [], author: context.actor}));
             }
-          result-encoding: json
 
       - name: Analyze changes
         id: pr_analysis
         run: |
-          FILES_JSON='${{ steps.commit_data.outputs.result }}'
-          FILES=$(echo "$FILES_JSON" | jq -r '.files')
-          AUTHOR=$(echo "$FILES_JSON" | jq -r '.author')
+          # Устанавливаем jq для обработки JSON
+          sudo apt-get install -y jq
 
-          TOTAL_CHANGES=$(echo "$FILES" | jq 'reduce .[] as $file (0; . + ($file.changes // 0))')
+          FILES_JSON='${{ steps.commit_data.outputs.result }}'
+          TOTAL_CHANGES=$(echo "$FILES_JSON" | jq '[.files[].changes] | add // 0')
+          AUTHOR=$(echo "$FILES_JSON" | jq -r '.author')
           IS_HUGE=$(($TOTAL_CHANGES > 300))
 
           echo "total_changes=$TOTAL_CHANGES" >> $GITHUB_OUTPUT
@@ -60,7 +62,7 @@ jobs:
             echo "comment=🫤 Ну... ладно. Но я всё равно недоволен." >> $GITHUB_OUTPUT
           else
             RANDOM_REVIEW=$(
-              echo -e "💀 Код-убийца\n🤮 Меня тошнит\n🔥 Сожги это" | shuf -n 1
+              echo -e "💀 Код-убийца\n🤮 Меня тошнит\n🔥 Сожги это\n👎 Это хуже, чем PHP в 2007\n💩 Код-дерьмо" | shuf -n 1
             )
             echo "comment=$RANDOM_REVIEW" >> $GITHUB_OUTPUT
           fi
