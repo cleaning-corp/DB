@@ -6,4 +6,4 @@ CREATE TYPE service_type AS ENUM (
     'carpet_cleaning', -- Химчистка ковров
     'furniture_cleaning', -- Химчистка мебели
     'disinfection' -- Дезинфекция помещений
-);
+    );

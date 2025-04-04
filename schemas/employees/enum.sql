@@ -3,4 +3,4 @@ CREATE TYPE position_type AS ENUM (
     'window-cleaner',
     'manager',
     'admin'
-);
+    );
