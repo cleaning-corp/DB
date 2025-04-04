@@ -29,64 +29,78 @@ jobs:
                 ref: context.sha
               });
 
-              const result = JSON.stringify({
+              core.setOutput('result', JSON.stringify({
                 files: commit.files || [],
-                author: commit.author?.login || context.actor
-              });
-
-              core.setOutput('result', result);
+                author: commit.author?.login || context.actor,
+                sha: context.sha
+              }));
             } catch (error) {
-              core.setFailed(`Commit access error: ${error.message}`);
-              core.setOutput('result', JSON.stringify({files: [], author: context.actor}));
+              core.setOutput('result', JSON.stringify({
+                files: [],
+                author: context.actor,
+                sha: context.sha
+              }));
             }
 
       - name: Analyze changes
         id: pr_analysis
         run: |
-          # Устанавливаем jq для обработки JSON
           sudo apt-get install -y jq
-
           FILES_JSON='${{ steps.commit_data.outputs.result }}'
           TOTAL_CHANGES=$(echo "$FILES_JSON" | jq '[.files[].changes] | add // 0')
           AUTHOR=$(echo "$FILES_JSON" | jq -r '.author')
+          COMMIT_SHA=$(echo "$FILES_JSON" | jq -r '.sha')
           IS_HUGE=$(($TOTAL_CHANGES > 300))
 
           echo "total_changes=$TOTAL_CHANGES" >> $GITHUB_OUTPUT
           echo "is_huge_change=$IS_HUGE" >> $GITHUB_OUTPUT
           echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
 
       - name: Generate comment
         id: generate_comment
         run: |
-          if [ ${{ steps.pr_analysis.outputs.total_changes }} -lt 50 ] && [ $(( RANDOM % 10 )) -eq 0 ]; then
+          REVIEWS=(
+            "💀 Код-убийца! Ты вообще тестировал это?"
+            "🤮 Меня тошнит от такого кода"
+            "🔥 Лучше удали это нафиг"
+            "👎 Худший код за всю историю"
+            "💩 Это просто позор"
+          )
+          RANDOM_REVIEW=${REVIEWS[$((RANDOM % ${#REVIEWS[@]}))]}
+
+          if [ ${{ steps.pr_analysis.outputs.total_changes }} -lt 50 ] && [ $((RANDOM % 10)) -eq 0 ]; then
             echo "comment=🫤 Ну... ладно. Но я всё равно недоволен." >> $GITHUB_OUTPUT
           else
-            RANDOM_REVIEW=$(
-              echo -e "💀 Код-убийца\n🤮 Меня тошнит\n🔥 Сожги это\n👎 Это хуже, чем PHP в 2007\n💩 Код-дерьмо" | shuf -n 1
-            )
             echo "comment=$RANDOM_REVIEW" >> $GITHUB_OUTPUT
           fi
 
-      - name: Post comment
+      - name: Post commit comment
         uses: actions/github-script@v6
         env:
           COMMENT: ${{ steps.generate_comment.outputs.comment }}
           AUTHOR: ${{ steps.pr_analysis.outputs.author }}
+          COMMIT_SHA: ${{ steps.pr_analysis.outputs.commit_sha }}
         with:
           script: |
             try {
               await github.rest.repos.createCommitComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                commit_sha: context.sha,
+                commit_sha: process.env.COMMIT_SHA,
                 body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
               });
             } catch (error) {
-              core.notice("Fallback to issue comment");
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
-              });
+              core.notice("Could not create commit comment: " + error.message);
+              // Создаем issue, если не удалось оставить комментарий к коммиту
+              try {
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: `Code review failed for commit ${process.env.COMMIT_SHA}`,
+                  body: `@${process.env.AUTHOR} ${process.env.COMMENT}`
+                });
+              } catch (issueError) {
+                core.error("Failed to create issue: " + issueError.message);
+              }
             }
