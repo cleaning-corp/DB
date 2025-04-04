@@ -1,29 +1,35 @@
-name: "Slava's Code Review"
+name: "Slava's DEMOLITION Code Review"
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
 
 jobs:
   nuclear_review:
     runs-on: ubuntu-latest
     steps:
-      - name: Analyze PR (for extra hate)
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Analyze changes
         id: pr_analysis
         uses: actions/github-script@v6
         with:
           script: |
-            const { data: files } = await github.rest.pulls.listFiles({
+            const { data: commits } = await github.rest.repos.listCommits({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
+              sha: context.sha,
+              per_page: 1
             });
 
-            const totalChanges = files.reduce((sum, file) => sum + file.changes, 0);
-            const isHugePR = totalChanges > 300;
-            const isMassiveFile = files.some(file => file.changes > 150);
+            const commit = commits[0];
+            const files = commit.files || [];
+            const totalChanges = files.reduce((sum, file) => sum + (file.changes || 0), 0);
+            const isHugeChange = totalChanges > 300;
+            const isMassiveFile = files.some(file => (file.changes || 0) > 150);
 
-            // Рандомная "критическая ошибка" для усиления ненависти
             const errors = [
               "найдены утечки памяти (вымышленные)",
               "нарушены принципы SOLID (как будто Слава их соблюдает)",
@@ -32,16 +38,16 @@ jobs:
             ];
             const randomError = errors[Math.floor(Math.random() * errors.length)];
 
-            // Если PR огромный — добавляем особый гнев
             let extraHate = "";
-            if (isHugePR) {
-              extraHate = "Ты чо, **целый роман** написал?! Это же не код, а **помойка**! Разбей на 20 PR!";
+            if (isHugeChange) {
+              extraHate = "Ты чо, **целый роман** написал?! Это же не код, а **помойка**! Разбей на куски!";
             } else if (isMassiveFile) {
-              extraHate = "Один файл — **300+ строк**? Ты **изверг**?!";
+              const badFile = files.find(file => (file.changes || 0) > 150);
+              extraHate = `Файл **${badFile.filename}** — это **ад на земле**! ${badFile.changes} изменений? Серьёзно?`;
             }
 
-            // Выводим данные для следующего шага
-            core.setOutput('is_huge_pr', isHugePR);
+            core.setOutput('total_changes', totalChanges);
+            core.setOutput('is_huge_change', isHugeChange);
             core.setOutput('is_massive_file', isMassiveFile);
             core.setOutput('random_error', randomError);
             core.setOutput('extra_hate', extraHate);
@@ -50,56 +56,35 @@ jobs:
         id: slava_review
         run: |
           RANDOM_NUMBER=$(( RANDOM % 100 ))
-          if [ $RANDOM_NUMBER -eq 0 ]; then
+          if [ ${{ steps.pr_analysis.outputs.total_changes }} -lt 50 ] && [ $(( RANDOM % 10 )) -eq 0 ]; then
             echo "REVIEW_OUTPUT=🫤 Ну... ладно. Но я всё равно **недоволен**." >> $GITHUB_ENV
           else
-            # Основной список язвительных комментариев (теперь ещё злее)
             REVIEWS=(
               "💀 **Код-убийца**. Ты вообще понимаешь, что этот код **сломает продакшн**?"
               "🤮 **Меня тошнит**. Кто тебя **пустил к компьютеру**?"
               "🔥 **Сожги это**. Нет, серьёзно, **лучшее решение** — rm -rf."
               "👎 **Это хуже, чем PHP в 2007**. Позор."
               "💩 **Код-дерьмо**. Даже **линтинг** сдох от стыда."
-              "🦍 **Обезьяна с IDE** написала бы лучше."
-              "🚑 **Вызовите скорую**, у меня **критическая ошибка в мозгу**."
-              "🤡 **Клоунада**. Ты **не разработчик**, ты **цирковой артист**."
-              "🧟 **Зомби-код**. Оно **уже мертво**, но почему-то ещё движется."
-              "📉 **Каждая строка** — **ошибка**. **Рекорд**!"
-              "💣 **Динамит в руки детям** — безопаснее, чем этот код."
-              "🙈 **Мои глаза горят**. Где **UNBLEACH**?"
-              "🧨 **Этот код — террорист**. **Забанить** автора."
-              "☠️ **Ядовито**. **Не трогать** без **противогаза**."
+              "🇷🇺 **Это что, код?** Это **позорище на всю деревню**!"
             )
             RANDOM_REVIEW=${REVIEWS[$(( RANDOM % ${#REVIEWS[@]} ))]}
 
-            # Добавляем "дополнительную ненависть", если PR большой
             if [[ "${{ steps.pr_analysis.outputs.extra_hate }}" != "" ]]; then
               RANDOM_REVIEW+="\n\n**💢 ДОПОЛНИТЕЛЬНЫЙ ГНЕВ 💢**: ${{ steps.pr_analysis.outputs.extra_hate }}"
             fi
 
-            # Добавляем "ошибку" для наукообразия
             RANDOM_REVIEW+="\n\n**🔧 'Найдена проблема'**: ${{ steps.pr_analysis.outputs.random_error }}"
-
             echo "REVIEW_OUTPUT=$RANDOM_REVIEW" >> $GITHUB_ENV
           fi
 
-      - name: Nuke the PR
+      - name: Nuke the Commit
         uses: actions/github-script@v6
         with:
           script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            const commentBody = `@${{ github.actor }} **СЛАВА ГНЕВНО РЕВЬЮВИТ ТВОЙ КОД В MAIN:**\n\n${process.env.REVIEW_OUTPUT}\n\n**P.S.** Не принимай близко к сердцу... (или принимай, мне плевать)`;
+            await github.rest.repos.createCommitComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `@${{ github.actor }} **СЛАВА ГНЕВНО РЕВЬЮВИТ ТВОЙ КОД:**\n\n${process.env.REVIEW_OUTPUT}\n\n**P.S.** Не принимай близко к сердцу... (или принимай, мне плевать)`
-            });
-
-            // Добавляем рандомную реакцию (💩, 👎, 🚮)
-            const reactions = ['-1', 'confused', 'eyes', 'hooray', 'laugh', 'heart', 'rocket'];
-            const toxicReactions = ['-1', 'confused', 'eyes']; // Только негативные
-            await github.rest.reactions.createForIssueComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: context.payload.comment.id,
-              content: toxicReactions[Math.floor(Math.random() * toxicReactions.length)]
+              commit_sha: context.sha,
+              body: commentBody
             });
