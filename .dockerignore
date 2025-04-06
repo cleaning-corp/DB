@@ -10,5 +10,6 @@ init.sql
 .env.example
 
 .git/
+.github/
 .gitattributes
 .gitignore
