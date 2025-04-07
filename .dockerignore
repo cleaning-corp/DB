@@ -3,7 +3,6 @@
 data/
 
 docs/
-init.sql
 
 .czrc
 .editorconfig
@@ -13,3 +12,5 @@ init.sql
 .github/
 .gitattributes
 .gitignore
+
+run.sh
