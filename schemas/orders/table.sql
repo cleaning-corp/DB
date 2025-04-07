@@ -5,7 +5,7 @@ CREATE TABLE orders
   employee_id        INTEGER       NOT NULL REFERENCES employees (employee_id),
   service_date       DATE          NOT NULL,
   service_type       service_type  NOT NULL,
-  additional_details TEXT,
+  additional_details VARCHAR(300),
   price              DECIMAL(8, 2) NOT NULL,
   created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

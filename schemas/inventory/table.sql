@@ -2,7 +2,7 @@ CREATE TABLE inventory
 (
   item_id           SERIAL PRIMARY KEY,
   name              VARCHAR(100)       NOT NULL,
-  description       TEXT,
+  description       VARCHAR(300),
   category          inventory_category NOT NULL,
   quantity          INTEGER            NOT NULL DEFAULT 0,
   unit              unit_type          NOT NULL,
